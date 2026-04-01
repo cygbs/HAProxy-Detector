@@ -17,7 +17,6 @@ import io.wdsj.haproxydetector.ReflectionUtil;
 import org.bukkit.Server;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
-import zone.rong.imaginebreaker.ImagineBreaker;
 
 import java.lang.reflect.Field;
 import java.util.NoSuchElementException;
@@ -30,7 +29,7 @@ public class InjectionStrategyA implements IInjectionStrategy {
     private NetworkManagerInjector injector;
     private InjectionFactory oldFactory;
 
-    public InjectionStrategyA(Logger logger) {this.logger = logger;}
+    public InjectionStrategyA(Logger logger) { this.logger = logger; }
 
     @Override
     public void inject() throws ReflectiveOperationException {
@@ -85,11 +84,8 @@ public class InjectionStrategyA implements IInjectionStrategy {
         private synchronized static void inject(ChannelPipeline pipeline, ChannelHandler networkManager) {
             HAProxyDetectorHandler detectorHandler = new HAProxyDetectorHandler(BukkitMain.logger,
                     new HAProxyMessageHandler(networkManager));
-            try {
-                pipeline.addAfter("timeout", "haproxy-detector", detectorHandler);
-            } catch (NoSuchElementException e) {
-                pipeline.addFirst("haproxy-detector", detectorHandler);
-            }
+            // 强制添加到管道最前面
+            pipeline.addFirst("haproxy-detector", detectorHandler);
         }
     }
 }
