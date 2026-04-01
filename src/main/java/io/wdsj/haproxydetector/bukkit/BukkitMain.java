@@ -1,19 +1,24 @@
 package io.wdsj.haproxydetector.bukkit;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.net.SocketAddress;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import com.comphenix.protocol.ProtocolLibrary;
-
 import com.comphenix.protocol.utility.MinecraftReflection;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelPipeline;
 import io.wdsj.haproxydetector.MetricsId;
 import io.wdsj.haproxydetector.ProxyWhitelist;
 import org.bstats.charts.SimplePie;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerLoginEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bstats.bukkit.Metrics;
 
@@ -22,7 +27,7 @@ import zone.rong.imaginebreaker.ImagineBreaker;
 
 import static io.wdsj.haproxydetector.ReflectionUtil.sneakyThrow;
 
-public final class BukkitMain extends JavaPlugin {
+public final class BukkitMain extends JavaPlugin implements Listener {
     static Logger logger;
 
     private IInjectionStrategy injectionStrategy;
@@ -81,6 +86,9 @@ public final class BukkitMain extends JavaPlugin {
             sneakyThrow(e);
         }
 
+        // 注册事件监听器，用于修正玩家地址
+        getServer().getPluginManager().registerEvents(this, this);
+
         try {
             Metrics metrics = new Metrics(this, 21070);
             metrics.addCustomChart(MetricsId.createWhitelistCountChart());
@@ -128,5 +136,57 @@ public final class BukkitMain extends JavaPlugin {
         }
 
         return networkManager;
+    }
+
+    // 玩家登录时修正 IP 地址
+    @EventHandler
+    public void onPlayerLogin(PlayerLoginEvent event) {
+        fixPlayerAddress(event.getPlayer());
+    }
+
+    private void fixPlayerAddress(Player player) {
+        try {
+            // 获取 CraftPlayer 类
+            Class<?> craftPlayerClass = player.getClass();
+            // 获取 PlayerConnection 字段
+            Field connectionField = craftPlayerClass.getDeclaredField("connection");
+            connectionField.setAccessible(true);
+            Object playerConnection = connectionField.get(player);
+            if (playerConnection == null) return;
+
+            // 获取 NetworkManager 字段
+            Field networkManagerField = playerConnection.getClass().getDeclaredField("networkManager");
+            networkManagerField.setAccessible(true);
+            Object networkManager = networkManagerField.get(playerConnection);
+            if (networkManager == null) return;
+
+            // 获取 NetworkManager 中的 socketAddress（已被 HAProxy 修改）
+            Field socketAddressField = networkManager.getClass().getDeclaredField("socketAddress");
+            socketAddressField.setAccessible(true);
+            SocketAddress realAddress = (SocketAddress) socketAddressField.get(networkManager);
+            if (realAddress == null) return;
+
+            // 获取 CraftPlayer 中的 address 字段
+            Field addressField = craftPlayerClass.getDeclaredField("address");
+            addressField.setAccessible(true);
+            SocketAddress currentAddress = (SocketAddress) addressField.get(player);
+            if (realAddress.equals(currentAddress)) return; // 已经正确，无需更新
+
+            // 更新玩家地址
+            addressField.set(player, realAddress);
+            // 同时更新 PlayerConnection 中的 address（如果存在）
+            Field connAddressField;
+            try {
+                connAddressField = playerConnection.getClass().getDeclaredField("address");
+                connAddressField.setAccessible(true);
+                connAddressField.set(playerConnection, realAddress);
+            } catch (NoSuchFieldException ignored) {
+                // 某些版本可能没有该字段，忽略
+            }
+
+            logger.log(Level.INFO, "Fixed player address for {0} to {1}", new Object[]{player.getName(), realAddress});
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "Failed to fix player address for " + player.getName(), e);
+        }
     }
 }
