@@ -22,7 +22,7 @@ jobs:
             - name: Build
               run: mvn -V -B clean package --file pom.xml
             - name: Upload Artifacts
-              uses: actions/upload-artifact@v3.1.2
+              uses: actions/upload-artifact@v4
               with:
                   name: Download
                   path: ./target/haproxy-detector-3.2.0.jar
