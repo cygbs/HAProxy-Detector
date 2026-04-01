@@ -138,7 +138,6 @@ public final class BukkitMain extends JavaPlugin implements Listener {
         return networkManager;
     }
 
-    // 玩家登录时修正 IP 地址
     @EventHandler
     public void onPlayerLogin(PlayerLoginEvent event) {
         fixPlayerAddress(event.getPlayer());
@@ -146,12 +145,10 @@ public final class BukkitMain extends JavaPlugin implements Listener {
 
     private void fixPlayerAddress(Player player) {
         try {
-            // 获取 CraftPlayer 类
-            Class<?> craftPlayerClass = player.getClass();
-            // 获取 PlayerConnection 字段
-            Field connectionField = craftPlayerClass.getDeclaredField("connection");
-            connectionField.setAccessible(true);
-            Object playerConnection = connectionField.get(player);
+            // CraftPlayer 中的 PlayerConnection 字段名在 1.12.2 是 netServerHandler
+            Field netServerHandlerField = player.getClass().getDeclaredField("netServerHandler");
+            netServerHandlerField.setAccessible(true);
+            Object playerConnection = netServerHandlerField.get(player);
             if (playerConnection == null) return;
 
             // 获取 NetworkManager 字段
@@ -166,22 +163,24 @@ public final class BukkitMain extends JavaPlugin implements Listener {
             SocketAddress realAddress = (SocketAddress) socketAddressField.get(networkManager);
             if (realAddress == null) return;
 
-            // 获取 CraftPlayer 中的 address 字段
-            Field addressField = craftPlayerClass.getDeclaredField("address");
-            addressField.setAccessible(true);
-            SocketAddress currentAddress = (SocketAddress) addressField.get(player);
-            if (realAddress.equals(currentAddress)) return; // 已经正确，无需更新
-
-            // 更新玩家地址
-            addressField.set(player, realAddress);
-            // 同时更新 PlayerConnection 中的 address（如果存在）
-            Field connAddressField;
+            // 尝试更新 CraftPlayer 的 address 字段（如果存在）
             try {
-                connAddressField = playerConnection.getClass().getDeclaredField("address");
+                Field addressField = player.getClass().getDeclaredField("address");
+                addressField.setAccessible(true);
+                SocketAddress currentAddress = (SocketAddress) addressField.get(player);
+                if (realAddress.equals(currentAddress)) return; // 已经是正确的，无需更新
+                addressField.set(player, realAddress);
+            } catch (NoSuchFieldException ignored) {
+                // 某些版本可能没有该字段，忽略
+            }
+
+            // 更新 PlayerConnection 的 address 字段（如果存在）
+            try {
+                Field connAddressField = playerConnection.getClass().getDeclaredField("address");
                 connAddressField.setAccessible(true);
                 connAddressField.set(playerConnection, realAddress);
             } catch (NoSuchFieldException ignored) {
-                // 某些版本可能没有该字段，忽略
+                // 忽略
             }
 
             logger.log(Level.INFO, "Fixed player address for {0} to {1}", new Object[]{player.getName(), realAddress});
