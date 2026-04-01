@@ -37,7 +37,6 @@ public final class BukkitMain extends JavaPlugin {
             ImagineBreaker.wipeMethodFilters();
         } catch (Exception ignored) {
         }
-
     }
 
     @Override
