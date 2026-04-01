@@ -19,7 +19,7 @@ public class InjectionStrategyB implements IInjectionStrategy {
     private ChannelInboundHandler injectorInitializer;
     private ChannelInboundHandler originalHandler;
 
-    public InjectionStrategyB(Logger logger) {this.logger = logger;}
+    public InjectionStrategyB(Logger logger) { this.logger = logger; }
 
     @Override
     public void inject() throws ReflectiveOperationException {
@@ -54,19 +54,14 @@ public class InjectionStrategyB implements IInjectionStrategy {
                 (proxy, method, args) -> {
                     if ("channelActive".equals(method.getName())) {
                         ChannelHandlerContext ctx = (ChannelHandlerContext) args[0];
-                        // the original method will attempt to remove itself when `channelActive` is called,
-                        // so we have to put it back into the pipeline temporarily.
-                        //
-                        // one important thing to note is that the original handler must be added BEFORE our
-                        // current handler. otherwise `channelActive` will be called on it twice.
-                        //
-                        // the name doesn't really matter here.
-                        ctx.pipeline().remove((ChannelHandler) proxy)
-                                .addFirst("protocol_lib_inbound_inject", originalHandler);
-
-                        Object ret = method.invoke(originalHandler, args);
+                        // 先注入处理器
                         doInject(ctx.channel());
-                        return ret;
+                        // 然后恢复原始处理器并让其执行
+                        ctx.pipeline().remove((ChannelHandler) proxy);
+                        ctx.pipeline().addFirst("protocol_lib_inbound_inject", originalHandler);
+                        // 让事件继续传播，原始处理器会在之后被调用
+                        ctx.fireChannelActive();
+                        return null;
                     } else {
                         return method.invoke(originalHandler, args);
                     }
@@ -84,7 +79,6 @@ public class InjectionStrategyB implements IInjectionStrategy {
     }
 
     void doInject(Channel ch) {
-        // this is similar to how ProtocolLib does it.
         if (ch.eventLoop().inEventLoop()) {
             try {
                 ChannelPipeline pipeline = ch.pipeline();
@@ -92,13 +86,11 @@ public class InjectionStrategyB implements IInjectionStrategy {
                     return;
 
                 if (pipeline.get("haproxy-decoder") != null) {
-                    // remove pre-existing HAProxy decoder
                     pipeline.remove("haproxy-decoder");
                 }
 
                 ChannelHandler haproxyHandler;
                 if (pipeline.get("haproxy-handler") != null) {
-                    // just use pre-existing handler (Paper)
                     haproxyHandler = pipeline.remove("haproxy-handler");
                 } else {
                     ChannelHandler networkManager = BukkitMain.getNetworkManager(pipeline);
@@ -106,14 +98,11 @@ public class InjectionStrategyB implements IInjectionStrategy {
                 }
 
                 HAProxyDetectorHandler detector = new HAProxyDetectorHandler(logger, haproxyHandler);
-                try {
-                    pipeline.addAfter("timeout", "haproxy-detector", detector);
-                } catch (NoSuchElementException e) {
-                    pipeline.addFirst("haproxy-detector", detector);
-                }
-            } catch (Throwable t) { // stop netty from eating my exceptions
+                // 强制添加到管道最前面
+                pipeline.addFirst("haproxy-detector", detector);
+            } catch (Throwable t) {
                 if (logger != null)
-                    logger.log(Level.WARNING, "Exception while injection proxy detector", t);
+                    logger.log(Level.WARNING, "Exception while injecting proxy detector", t);
                 else
                     t.printStackTrace();
             }
